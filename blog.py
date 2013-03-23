@@ -31,10 +31,13 @@ def insert_entry(title, post, tags_array, author):
             "body": post, 
             "permalink":permalink, 
             "tags": tags_array, 
+            "comments": [],
             "date": datetime.datetime.utcnow()}
 
     try:
+
         posts.insert(post)
+        print "Inserting the post"
 
     except:
         print "Error inserting post"
@@ -51,17 +54,9 @@ def blog_index():
 
     username = login_check()  # see if user is logged in
 
-    # XXX HW 3.2 Work Here
-    # Find the last ten most recent posts, sorted from newest to oldest
-
-    cursor = posts.find().sort('date',direction=-1).limit(10)
-       
-    
-    # End Student Work
-
-
+    cursor = posts.find().sort('date', direction=-1).limit(10)
     l=[]
-
+    
     for post in cursor:
         post['date'] = post['date'].strftime("%A, %B %d %Y at %I:%M%p") # fix up date
         if ('tags' not in post):
@@ -75,6 +70,33 @@ def blog_index():
                   'author':post['author'],
                   'comments':post['comments']})
 
+
+    return bottle.template('blog_template', dict(myposts=l,username=username))
+
+@bottle.route('/tag/<tag>')
+def posts_by_tag(tag="notfound"):
+    connection = pymongo.Connection(connection_string, safe=True)
+    db = connection.blog
+    posts = db.posts
+
+    username = login_check()  # see if user is logged in
+
+    tag = cgi.escape(tag)
+    cursor = posts.find({'tags':tag}).sort('date', direction=-1).limit(10)
+    l=[]
+    
+    for post in cursor:
+        post['date'] = post['date'].strftime("%A, %B %d %Y at %I:%M%p") # fix up date
+        if ('tags' not in post):
+            post['tags'] = [] # fill it in if its not there already
+        if ('comments' not in post):
+            post['comments'] = []
+            
+        l.append({'title':post['title'], 'body':post['body'], 'post_date':post['date'], 
+                  'permalink':post['permalink'], 
+                  'tags':post['tags'],
+                  'author':post['author'],
+                  'comments':post['comments']})
 
     return bottle.template('blog_template', dict(myposts=l,username=username))
 
@@ -93,16 +115,23 @@ def show_post(permalink="notfound"):
     path_re = re.compile(r"^([^\.]+).json$")
     
     print "about to query on permalink = ", permalink
-    # XXX HW 3.2 Work here
-    # find a post that has the appropriate permalink
-    
     post = posts.find_one({'permalink':permalink})
 
-    # end student work
     if post == None:
         bottle.redirect("/post_not_found")
     
     print "date of entry is ", post['date']
+
+    # XXX Work here. Final exam Problem 4
+    # note that if you keep the values in exactly the same way the entry_template.tpl expects
+    # as hinted by the code right below here that makes sure that code does not barf, 
+    # then you probably don't need to add any code here at all.
+
+
+    # fix up likes values. set to zero if data is not present
+    for comment in post['comments']:
+        if ('num_likes' not in comment):
+            comment['num_likes'] = 0
 
     # fix up date
     post['date'] = post['date'].strftime("%A, %B %d %Y at %I:%M%p")
@@ -133,9 +162,7 @@ def post_newcomment():
     username = login_check()  # see if user is logged in
     permalink = cgi.escape(permalink)
 
-    # XXX HW 3.3 - Find the post that matches the permalink.
     post = posts.find_one({'permalink':permalink})
-
     # if post not found, redirct to post not found error
     if post == None:
         bottle.redirect("/post_not_found")
@@ -167,9 +194,11 @@ def post_newcomment():
         comment['body'] = body
 
         try:
-            last_error = posts.update({'permalink':permalink},{'$push':{'comments':comment}}, upsert=False, manipulate=False, safe=True)
+            last_error = posts.update({'permalink':permalink}, {'$push':{'comments':comment}}, upsert=False, manipulate=False, safe=True)
+
+            print "about to update a blog post with a comment"
             
-            print "num documents updated" + last_error['n']
+            #print "num documents updated" + last_error['n']
         except:
             print "Could not update the collection, error"
             print "Unexpected error:", sys.exc_info()[0]
@@ -179,6 +208,46 @@ def post_newcomment():
         print "newcomment: added the comment....redirecting to post"
 
         bottle.redirect("/post/"+permalink)
+
+# used to process a like on a blog post
+@bottle.post('/like')
+def post_comment_like():
+    permalink = bottle.request.forms.get("permalink")
+    comment_ordinal = bottle.request.forms.get("comment_ordinal")
+
+    print "post_comment_like"
+
+    # look up the post in question
+    connection = pymongo.Connection(connection_string, safe=True)
+    db = connection.blog
+    posts = db.posts
+
+    ordinal = int(comment_ordinal)
+
+    username = login_check()  # see if user is logged in
+    permalink = cgi.escape(permalink)
+
+    post = posts.find_one({'permalink':permalink})
+    # if post not found, redirect to post not found error
+    # print "post-comment_like", permalink, comment_ordinal
+    if post == None:
+        bottle.redirect("/post_not_found")
+
+    # it all looks good. increment the ordinal (no error checking, but whatever)
+    try:
+        # XXX Final exam problem 4. Work here.
+        posts.update({'permalink':permalink},{'$inc':{'comments.'+str(ordinal)+'.num_likes':1}}, upsert=True)
+
+        print "Incrementing the like counter"
+
+    except:
+        print "Could not update the collection, error"
+        print "Unexpected error:", sys.exc_info()[0]
+
+
+    print "post_newlike: added the comment....redirecting to post"
+
+    bottle.redirect("/post/"+permalink)
 
         
     
